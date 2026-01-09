@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { FileText, Merge, Split, Minimize2, Image, Upload, LogOut, User, Check, Zap, Crown } from 'lucide-react'
+import { FileText, Merge, Split, Minimize2, Image, Upload, LogOut, User, Check, Zap, Crown, Settings, Trash2, KeyRound } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
@@ -38,8 +38,23 @@ function App() {
   const [files, setFiles] = useState<File[]>([])
   const [processing, setProcessing] = useState(false)
   const [message, setMessage] = useState('')
-  const [pricing, setPricing] = useState<PricingTier[]>([])
-  const [showPricing, setShowPricing] = useState(false)
+    const [pricing, setPricing] = useState<PricingTier[]>([])
+    const [showPricing, setShowPricing] = useState(false)
+    const [showForgotPassword, setShowForgotPassword] = useState(false)
+    const [forgotPasswordEmail, setForgotPasswordEmail] = useState('')
+    const [forgotPasswordMessage, setForgotPasswordMessage] = useState('')
+    const [showResetPassword, setShowResetPassword] = useState(false)
+    const [resetToken, setResetToken] = useState('')
+    const [newPassword, setNewPassword] = useState('')
+    const [resetPasswordMessage, setResetPasswordMessage] = useState('')
+    const [showProfile, setShowProfile] = useState(false)
+    const [profileEmail, setProfileEmail] = useState('')
+    const [currentPassword, setCurrentPassword] = useState('')
+    const [profileNewPassword, setProfileNewPassword] = useState('')
+    const [profileMessage, setProfileMessage] = useState('')
+    const [showTerms, setShowTerms] = useState(false)
+    const [showPrivacy, setShowPrivacy] = useState(false)
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const fetchUser = useCallback(async () => {
     if (!token) return
@@ -97,12 +112,12 @@ function App() {
       } else {
         setAuthError(data.detail || 'Authentication failed')
       }
-    } catch (e) {
-      setAuthError('Network error. Please try again.')
+      } catch {
+        setAuthError('Network error. Please try again.')
+      }
     }
-  }
 
-    const handleLogout = () => {
+      const handleLogout = () => {
       localStorage.removeItem('token')
       setToken(null)
       setUser(null)
@@ -124,12 +139,12 @@ function App() {
         } else {
           setAuthError(data.detail || 'Google authentication failed')
         }
-      } catch (e) {
-        setAuthError('Network error. Please try again.')
-      }
-    }
+          } catch {
+            setAuthError('Network error. Please try again.')
+          }
+        }
 
-    const handleAppleAuth = async (appleToken: string, userInfo?: { email?: string }) => {
+        const handleAppleAuth = async (appleToken: string, userInfo?: { email?: string }) => {
       setAuthError('')
       try {
         const res = await fetch(`${API_URL}/api/auth/apple`, {
@@ -145,12 +160,12 @@ function App() {
         } else {
           setAuthError(data.detail || 'Apple authentication failed')
         }
-      } catch (e) {
-        setAuthError('Network error. Please try again.')
-      }
-    }
+          } catch {
+            setAuthError('Network error. Please try again.')
+          }
+        }
 
-    const initGoogleSignIn = () => {
+        const initGoogleSignIn = () => {
       if (!GOOGLE_CLIENT_ID) {
         setAuthError('Google Sign-In not configured')
         return
@@ -319,14 +334,14 @@ function App() {
         const data = await res.json()
         setMessage(data.detail || 'Processing failed')
       }
-    } catch (e) {
-      setMessage('Network error. Please try again.')
-    } finally {
-      setProcessing(false)
+      } catch {
+        setMessage('Network error. Please try again.')
+      } finally {
+        setProcessing(false)
+      }
     }
-  }
 
-  const handleUpgrade = async (priceId: string) => {
+    const handleUpgrade = async (priceId: string) => {
     if (!token) {
       setAuthDialogOpen(true)
       return
@@ -350,28 +365,140 @@ function App() {
       } else {
         setMessage(data.detail || 'Failed to create checkout session')
       }
-    } catch (e) {
-      setMessage('Network error. Please try again.')
-    }
-  }
-
-  const handleManageSubscription = async () => {
-    if (!token) return
-    try {
-      const res = await fetch(`${API_URL}/api/stripe/portal`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      const data = await res.json()
-      if (res.ok && data.portal_url) {
-        window.location.href = data.portal_url
+      } catch {
+        setMessage('Network error. Please try again.')
       }
-    } catch (e) {
-      console.error('Failed to open portal', e)
     }
-  }
 
-  const tools = [
+      const handleManageSubscription = async () => {
+      if (!token) return
+      try {
+        const res = await fetch(`${API_URL}/api/stripe/portal`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        const data = await res.json()
+        if (res.ok && data.portal_url) {
+          window.location.href = data.portal_url
+        }
+          } catch (err) {
+            console.error('Failed to open portal', err)
+          }
+        }
+
+        const handleForgotPassword = async (e: React.FormEvent) => {
+      e.preventDefault()
+      setForgotPasswordMessage('')
+      try {
+        const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: forgotPasswordEmail })
+        })
+        const data = await res.json()
+        setForgotPasswordMessage(data.message || 'Check your email for reset instructions.')
+          } catch {
+            setForgotPasswordMessage('Network error. Please try again.')
+          }
+        }
+
+        const handleResetPassword = async (e: React.FormEvent) => {
+      e.preventDefault()
+      setResetPasswordMessage('')
+      try {
+        const res = await fetch(`${API_URL}/api/auth/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: resetToken, new_password: newPassword })
+        })
+        const data = await res.json()
+        if (res.ok) {
+          setResetPasswordMessage('Password reset successfully! You can now sign in.')
+          setNewPassword('')
+          setResetToken('')
+        } else {
+          setResetPasswordMessage(data.detail || 'Failed to reset password.')
+        }
+          } catch {
+            setResetPasswordMessage('Network error. Please try again.')
+          }
+        }
+
+        const handleUpdateProfile = async (e: React.FormEvent) => {
+      e.preventDefault()
+      setProfileMessage('')
+      try {
+        const body: { email?: string; current_password?: string; new_password?: string } = {}
+        if (profileEmail && profileEmail !== user?.email) body.email = profileEmail
+        if (profileNewPassword) {
+          body.current_password = currentPassword
+          body.new_password = profileNewPassword
+        }
+      
+        if (Object.keys(body).length === 0) {
+          setProfileMessage('No changes to save.')
+          return
+        }
+
+        const res = await fetch(`${API_URL}/api/user/profile`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(body)
+        })
+        const data = await res.json()
+        if (res.ok) {
+          setProfileMessage('Profile updated successfully!')
+          setCurrentPassword('')
+          setProfileNewPassword('')
+          fetchUser()
+        } else {
+          setProfileMessage(data.detail || 'Failed to update profile.')
+        }
+          } catch {
+            setProfileMessage('Network error. Please try again.')
+          }
+        }
+
+        const handleDeleteAccount = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/user/account`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        if (res.ok) {
+          localStorage.removeItem('token')
+          setToken(null)
+          setUser(null)
+          setShowDeleteConfirm(false)
+          setShowProfile(false)
+        }
+          } catch (err) {
+            console.error('Failed to delete account', err)
+          }
+        }
+
+        // Check for reset token in URL
+    useEffect(() => {
+      const params = new URLSearchParams(window.location.search)
+      const token = params.get('token')
+      if (token) {
+        setResetToken(token)
+        setShowResetPassword(true)
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+    }, [])
+
+    // Initialize profile email when user loads
+    useEffect(() => {
+      if (user) {
+        setProfileEmail(user.email)
+      }
+    }, [user])
+
+    const tools = [
     { id: 'merge', name: 'Merge PDFs', icon: Merge, description: 'Combine multiple PDFs into one', accept: '.pdf', multiple: true },
     { id: 'split', name: 'Split PDF', icon: Split, description: 'Split a PDF into individual pages', accept: '.pdf', multiple: false },
     { id: 'compress', name: 'Compress PDF', icon: Minimize2, description: 'Reduce PDF file size', accept: '.pdf', multiple: false },
@@ -401,15 +528,19 @@ function App() {
                   <span className="mx-2">|</span>
                   <span>{user.daily_ops_remaining} ops left today</span>
                 </div>
-                {user.tier !== 'free' && (
-                  <Button variant="outline" size="sm" onClick={handleManageSubscription} className="border-white/20 text-white hover:bg-white/10">
-                    Manage Subscription
-                  </Button>
-                )}
-                <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:text-red-300">
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Logout
-                </Button>
+                                {user.tier !== 'free' && (
+                                  <Button variant="outline" size="sm" onClick={handleManageSubscription} className="border-white/20 text-white hover:bg-white/10">
+                                    Manage Subscription
+                                  </Button>
+                                )}
+                                <Button variant="ghost" size="sm" onClick={() => setShowProfile(true)} className="text-white hover:text-purple-300">
+                                  <Settings className="h-4 w-4 mr-2" />
+                                  Profile
+                                </Button>
+                                <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:text-red-300">
+                                  <LogOut className="h-4 w-4 mr-2" />
+                                  Logout
+                                </Button>
               </div>
             ) : (
               <Dialog open={authDialogOpen} onOpenChange={setAuthDialogOpen}>
@@ -488,17 +619,28 @@ function App() {
                                                                               </Button>
                                                                             </div>
                     
-                                      <p className="text-center text-sm text-white/60 mt-4">
-                                        {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
-                                        <button
-                                          type="button"
-                                          className="text-purple-400 hover:underline"
-                                          onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-                                        >
-                                          {authMode === 'login' ? 'Sign up' : 'Sign in'}
-                                        </button>
-                                      </p>
-                                    </form>
+                                                                          {authMode === 'login' && (
+                                                                            <p className="text-center text-sm">
+                                                                              <button
+                                                                                type="button"
+                                                                                className="text-purple-400 hover:underline"
+                                                                                onClick={() => { setAuthDialogOpen(false); setShowForgotPassword(true); }}
+                                                                              >
+                                                                                Forgot your password?
+                                                                              </button>
+                                                                            </p>
+                                                                          )}
+                                                                          <p className="text-center text-sm text-white/60 mt-4">
+                                                                            {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
+                                                                            <button
+                                                                              type="button"
+                                                                              className="text-purple-400 hover:underline"
+                                                                              onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+                                                                            >
+                                                                              {authMode === 'login' ? 'Sign up' : 'Sign in'}
+                                                                            </button>
+                                                                          </p>
+                                                                        </form>
                 </DialogContent>
               </Dialog>
             )}
@@ -653,10 +795,226 @@ function App() {
         </DialogContent>
       </Dialog>
 
+      {/* Forgot Password Modal */}
+      <Dialog open={showForgotPassword} onOpenChange={setShowForgotPassword}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5" />
+              Reset Password
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleForgotPassword} className="space-y-4">
+            <p className="text-white/70 text-sm">Enter your email address and we'll send you a link to reset your password.</p>
+            <div>
+              <Label htmlFor="forgot-email">Email</Label>
+              <Input
+                id="forgot-email"
+                type="email"
+                value={forgotPasswordEmail}
+                onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                className="bg-slate-800 border-white/20 text-white"
+                required
+              />
+            </div>
+            {forgotPasswordMessage && (
+              <p className={`text-sm ${forgotPasswordMessage.includes('error') ? 'text-red-400' : 'text-green-400'}`}>
+                {forgotPasswordMessage}
+              </p>
+            )}
+            <Button type="submit" className="w-full bg-purple-600 hover:bg-purple-700">
+              Send Reset Link
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Modal */}
+      <Dialog open={showResetPassword} onOpenChange={setShowResetPassword}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5" />
+              Set New Password
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleResetPassword} className="space-y-4">
+            <div>
+              <Label htmlFor="new-password">New Password</Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="bg-slate-800 border-white/20 text-white"
+                required
+                minLength={6}
+              />
+            </div>
+            {resetPasswordMessage && (
+              <p className={`text-sm ${resetPasswordMessage.includes('successfully') ? 'text-green-400' : 'text-red-400'}`}>
+                {resetPasswordMessage}
+              </p>
+            )}
+            <Button type="submit" className="w-full bg-purple-600 hover:bg-purple-700">
+              Reset Password
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Profile Modal */}
+      <Dialog open={showProfile} onOpenChange={setShowProfile}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Account Settings
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateProfile} className="space-y-4">
+            <div>
+              <Label htmlFor="profile-email">Email</Label>
+              <Input
+                id="profile-email"
+                type="email"
+                value={profileEmail}
+                onChange={(e) => setProfileEmail(e.target.value)}
+                className="bg-slate-800 border-white/20 text-white"
+              />
+            </div>
+            <div className="border-t border-white/10 pt-4">
+              <p className="text-white/70 text-sm mb-3">Change Password (leave blank to keep current)</p>
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="current-password">Current Password</Label>
+                  <Input
+                    id="current-password"
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    className="bg-slate-800 border-white/20 text-white"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="profile-new-password">New Password</Label>
+                  <Input
+                    id="profile-new-password"
+                    type="password"
+                    value={profileNewPassword}
+                    onChange={(e) => setProfileNewPassword(e.target.value)}
+                    className="bg-slate-800 border-white/20 text-white"
+                  />
+                </div>
+              </div>
+            </div>
+            {profileMessage && (
+              <p className={`text-sm ${profileMessage.includes('successfully') ? 'text-green-400' : 'text-red-400'}`}>
+                {profileMessage}
+              </p>
+            )}
+            <Button type="submit" className="w-full bg-purple-600 hover:bg-purple-700">
+              Save Changes
+            </Button>
+            <div className="border-t border-white/10 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full border-red-500/50 text-red-400 hover:bg-red-500/10"
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Account
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Account Confirmation */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-red-400">Delete Account</DialogTitle>
+          </DialogHeader>
+          <p className="text-white/70">Are you sure you want to delete your account? This action cannot be undone.</p>
+          <div className="flex gap-3 mt-4">
+            <Button variant="outline" className="flex-1 border-white/20 text-white" onClick={() => setShowDeleteConfirm(false)}>
+              Cancel
+            </Button>
+            <Button className="flex-1 bg-red-600 hover:bg-red-700" onClick={handleDeleteAccount}>
+              Delete Account
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Terms of Service Modal */}
+      <Dialog open={showTerms} onOpenChange={setShowTerms}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Terms of Service</DialogTitle>
+          </DialogHeader>
+          <div className="prose prose-invert prose-sm max-w-none">
+            <p className="text-white/70">Last updated: January 2026</p>
+            <h3 className="text-white">1. Acceptance of Terms</h3>
+            <p className="text-white/70">By accessing and using PDFMagic, you accept and agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use our service.</p>
+            <h3 className="text-white">2. Description of Service</h3>
+            <p className="text-white/70">PDFMagic provides online PDF processing tools including merging, splitting, compressing, and converting PDF files. We offer both free and paid subscription tiers.</p>
+            <h3 className="text-white">3. User Accounts</h3>
+            <p className="text-white/70">You are responsible for maintaining the confidentiality of your account credentials. You agree to notify us immediately of any unauthorized use of your account.</p>
+            <h3 className="text-white">4. Acceptable Use</h3>
+            <p className="text-white/70">You agree not to use PDFMagic for any unlawful purpose or to upload any content that violates applicable laws or third-party rights.</p>
+            <h3 className="text-white">5. Payment Terms</h3>
+            <p className="text-white/70">Paid subscriptions are billed monthly. You may cancel at any time, and your subscription will remain active until the end of the billing period.</p>
+            <h3 className="text-white">6. Limitation of Liability</h3>
+            <p className="text-white/70">PDFMagic is provided "as is" without warranties of any kind. We are not liable for any damages arising from your use of the service.</p>
+            <h3 className="text-white">7. Changes to Terms</h3>
+            <p className="text-white/70">We reserve the right to modify these terms at any time. Continued use of the service constitutes acceptance of modified terms.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Privacy Policy Modal */}
+      <Dialog open={showPrivacy} onOpenChange={setShowPrivacy}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Privacy Policy</DialogTitle>
+          </DialogHeader>
+          <div className="prose prose-invert prose-sm max-w-none">
+            <p className="text-white/70">Last updated: January 2026</p>
+            <h3 className="text-white">1. Information We Collect</h3>
+            <p className="text-white/70">We collect information you provide directly, including email address and payment information. We also collect usage data to improve our service.</p>
+            <h3 className="text-white">2. How We Use Your Information</h3>
+            <p className="text-white/70">We use your information to provide and improve our services, process payments, send service-related communications, and respond to your requests.</p>
+            <h3 className="text-white">3. File Processing</h3>
+            <p className="text-white/70">Files you upload are processed on our servers and are automatically deleted after processing. We do not store or access the contents of your files beyond what is necessary to provide the service.</p>
+            <h3 className="text-white">4. Data Security</h3>
+            <p className="text-white/70">We implement appropriate security measures to protect your personal information. However, no method of transmission over the Internet is 100% secure.</p>
+            <h3 className="text-white">5. Third-Party Services</h3>
+            <p className="text-white/70">We use third-party services for payment processing (Stripe) and authentication. These services have their own privacy policies.</p>
+            <h3 className="text-white">6. Your Rights</h3>
+            <p className="text-white/70">You have the right to access, correct, or delete your personal information. You can manage your account settings or contact us for assistance.</p>
+            <h3 className="text-white">7. Contact Us</h3>
+            <p className="text-white/70">If you have questions about this Privacy Policy, please contact us through our support channels.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Footer */}
       <footer className="border-t border-white/10 bg-black/20 mt-16">
-        <div className="container mx-auto px-4 py-8 text-center text-white/50 text-sm">
-          <p>PDFMagic - Fast, secure PDF tools for everyone</p>
+        <div className="container mx-auto px-4 py-8">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <p className="text-white/50 text-sm">PDFMagic - Fast, secure PDF tools for everyone</p>
+            <div className="flex gap-6 text-sm">
+              <button onClick={() => setShowTerms(true)} className="text-white/50 hover:text-white transition-colors">
+                Terms of Service
+              </button>
+              <button onClick={() => setShowPrivacy(true)} className="text-white/50 hover:text-white transition-colors">
+                Privacy Policy
+              </button>
+            </div>
+          </div>
         </div>
       </footer>
     </div>
