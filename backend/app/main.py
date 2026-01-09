@@ -57,7 +57,7 @@ STRIPE_PRICE_PRO = os.getenv("STRIPE_PRICE_PRO", "")
 STRIPE_PRICE_BUSINESS = os.getenv("STRIPE_PRICE_BUSINESS", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")  # PostgreSQL connection string
 DATABASE_PATH = os.getenv("DATABASE_PATH", "/data/app.db")  # SQLite fallback
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://automated-income-generator-amy6xu4e.devinapps.com")
 
 # OAuth Configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -178,14 +178,44 @@ def init_db():
                     stripe_subscription_id TEXT,
                     reset_token TEXT,
                     reset_token_expires TIMESTAMP,
+                    referral_code TEXT UNIQUE,
+                    referred_by INTEGER REFERENCES users(id),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Migration: Add referral columns if they don't exist (for existing databases)
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT UNIQUE")
+                conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by INTEGER REFERENCES users(id)")
+            except Exception:
+                pass  # Columns already exist
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS operations (
                     id SERIAL PRIMARY KEY,
                     user_id INTEGER REFERENCES users(id),
                     operation_type TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Analytics events table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS analytics_events (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id),
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Referral rewards table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS referral_rewards (
+                    id SERIAL PRIMARY KEY,
+                    referrer_id INTEGER REFERENCES users(id),
+                    referred_id INTEGER REFERENCES users(id),
+                    reward_type TEXT NOT NULL,
+                    reward_amount REAL,
+                    status TEXT DEFAULT 'pending',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -201,9 +231,21 @@ def init_db():
                     stripe_subscription_id TEXT,
                     reset_token TEXT,
                     reset_token_expires TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    referral_code TEXT UNIQUE,
+                    referred_by INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (referred_by) REFERENCES users (id)
                 )
             """)
+            # Migration: Add referral columns if they don't exist (for existing databases)
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
+            except Exception:
+                pass  # Column already exists
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
+            except Exception:
+                pass  # Column already exists
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS operations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,6 +253,31 @@ def init_db():
                     operation_type TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+            """)
+            # Analytics events table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS analytics_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+            """)
+            # Referral rewards table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS referral_rewards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    referrer_id INTEGER,
+                    referred_id INTEGER,
+                    reward_type TEXT NOT NULL,
+                    reward_amount REAL,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (referrer_id) REFERENCES users (id),
+                    FOREIGN KEY (referred_id) REFERENCES users (id)
                 )
             """)
         conn.commit()
@@ -955,6 +1022,350 @@ async def get_pricing():
             }
         ]
     }
+
+# Analytics helper functions
+def track_event(user_id: int, event_type: str, event_data: str = None):
+    """Track an analytics event"""
+    with get_db() as conn:
+        if USE_POSTGRES:
+            conn.execute(
+                "INSERT INTO analytics_events (user_id, event_type, event_data) VALUES (%s, %s, %s)",
+                (user_id, event_type, event_data)
+            )
+        else:
+            conn.execute(
+                "INSERT INTO analytics_events (user_id, event_type, event_data) VALUES (?, ?, ?)",
+                (user_id, event_type, event_data)
+            )
+        conn.commit()
+
+def generate_referral_code() -> str:
+    """Generate a unique referral code"""
+    return secrets.token_urlsafe(8)
+
+def get_user_by_referral_code(code: str):
+    """Get user by referral code"""
+    with get_db() as conn:
+        if USE_POSTGRES:
+            result = conn.execute("SELECT id, email FROM users WHERE referral_code = %s", (code,))
+        else:
+            result = conn.execute("SELECT id, email FROM users WHERE referral_code = ?", (code,))
+        return result.fetchone()
+
+def create_referral_reward(referrer_id: int, referred_id: int, reward_type: str, reward_amount: float):
+    """Create a referral reward"""
+    with get_db() as conn:
+        if USE_POSTGRES:
+            conn.execute(
+                "INSERT INTO referral_rewards (referrer_id, referred_id, reward_type, reward_amount) VALUES (%s, %s, %s, %s)",
+                (referrer_id, referred_id, reward_type, reward_amount)
+            )
+        else:
+            conn.execute(
+                "INSERT INTO referral_rewards (referrer_id, referred_id, reward_type, reward_amount) VALUES (?, ?, ?, ?)",
+                (referrer_id, referred_id, reward_type, reward_amount)
+            )
+        conn.commit()
+
+# Pydantic models for Phase 2
+class ReferralSignupRequest(BaseModel):
+    email: EmailStr
+    password: str
+    referral_code: Optional[str] = None
+
+# Analytics endpoints
+@app.get("/api/analytics/dashboard")
+async def get_analytics_dashboard(user: dict = Depends(require_user)):
+    """Get analytics dashboard data (admin only for now, but shows user's own stats)"""
+    with get_db() as conn:
+        # Get user's own stats
+        if USE_POSTGRES:
+            # Total operations by user
+            ops_result = conn.execute(
+                "SELECT COUNT(*) as count FROM operations WHERE user_id = %s",
+                (user["id"],)
+            )
+            ops_count = ops_result.fetchone()[0]
+            
+            # Operations by type
+            ops_by_type = conn.execute(
+                "SELECT operation_type, COUNT(*) as count FROM operations WHERE user_id = %s GROUP BY operation_type",
+                (user["id"],)
+            )
+            ops_breakdown = {row[0]: row[1] for row in ops_by_type.fetchall()}
+            
+            # Referral stats
+            referral_result = conn.execute(
+                "SELECT referral_code FROM users WHERE id = %s",
+                (user["id"],)
+            )
+            referral_code = referral_result.fetchone()[0]
+            
+            referred_count = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE referred_by = %s",
+                (user["id"],)
+            )
+            referred_users = referred_count.fetchone()[0]
+            
+            rewards_result = conn.execute(
+                "SELECT SUM(reward_amount) FROM referral_rewards WHERE referrer_id = %s AND status = 'completed'",
+                (user["id"],)
+            )
+            total_rewards = rewards_result.fetchone()[0] or 0
+        else:
+            ops_result = conn.execute(
+                "SELECT COUNT(*) as count FROM operations WHERE user_id = ?",
+                (user["id"],)
+            )
+            ops_count = ops_result.fetchone()[0]
+            
+            ops_by_type = conn.execute(
+                "SELECT operation_type, COUNT(*) as count FROM operations WHERE user_id = ? GROUP BY operation_type",
+                (user["id"],)
+            )
+            ops_breakdown = {row[0]: row[1] for row in ops_by_type.fetchall()}
+            
+            referral_result = conn.execute(
+                "SELECT referral_code FROM users WHERE id = ?",
+                (user["id"],)
+            )
+            referral_code = referral_result.fetchone()[0]
+            
+            referred_count = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE referred_by = ?",
+                (user["id"],)
+            )
+            referred_users = referred_count.fetchone()[0]
+            
+            rewards_result = conn.execute(
+                "SELECT SUM(reward_amount) FROM referral_rewards WHERE referrer_id = ? AND status = 'completed'",
+                (user["id"],)
+            )
+            total_rewards = rewards_result.fetchone()[0] or 0
+    
+    return {
+        "total_operations": ops_count,
+        "operations_by_type": ops_breakdown,
+        "referral_code": referral_code,
+        "referred_users": referred_users,
+        "total_rewards": total_rewards,
+        "tier": user["tier"]
+    }
+
+@app.get("/api/analytics/admin")
+async def get_admin_analytics(user: dict = Depends(require_user)):
+    """Get admin analytics (platform-wide stats)"""
+    # For now, allow any logged-in user to see aggregate stats
+    # In production, you'd want to check for admin role
+    with get_db() as conn:
+        if USE_POSTGRES:
+            # Total users
+            users_result = conn.execute("SELECT COUNT(*) FROM users")
+            total_users = users_result.fetchone()[0]
+            
+            # Users by tier
+            tier_result = conn.execute("SELECT tier, COUNT(*) FROM users GROUP BY tier")
+            users_by_tier = {row[0]: row[1] for row in tier_result.fetchall()}
+            
+            # Total operations
+            ops_result = conn.execute("SELECT COUNT(*) FROM operations")
+            total_ops = ops_result.fetchone()[0]
+            
+            # Operations by type
+            ops_type_result = conn.execute("SELECT operation_type, COUNT(*) FROM operations GROUP BY operation_type")
+            ops_by_type = {row[0]: row[1] for row in ops_type_result.fetchall()}
+            
+            # Signups in last 7 days
+            recent_signups = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL '7 days'"
+            )
+            signups_7d = recent_signups.fetchone()[0]
+            
+            # Conversions (free to paid)
+            conversions = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE tier != 'free'"
+            )
+            paid_users = conversions.fetchone()[0]
+        else:
+            users_result = conn.execute("SELECT COUNT(*) FROM users")
+            total_users = users_result.fetchone()[0]
+            
+            tier_result = conn.execute("SELECT tier, COUNT(*) FROM users GROUP BY tier")
+            users_by_tier = {row[0]: row[1] for row in tier_result.fetchall()}
+            
+            ops_result = conn.execute("SELECT COUNT(*) FROM operations")
+            total_ops = ops_result.fetchone()[0]
+            
+            ops_type_result = conn.execute("SELECT operation_type, COUNT(*) FROM operations GROUP BY operation_type")
+            ops_by_type = {row[0]: row[1] for row in ops_type_result.fetchall()}
+            
+            recent_signups = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE created_at > datetime('now', '-7 days')"
+            )
+            signups_7d = recent_signups.fetchone()[0]
+            
+            conversions = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE tier != 'free'"
+            )
+            paid_users = conversions.fetchone()[0]
+    
+    conversion_rate = (paid_users / total_users * 100) if total_users > 0 else 0
+    
+    return {
+        "total_users": total_users,
+        "users_by_tier": users_by_tier,
+        "total_operations": total_ops,
+        "operations_by_type": ops_by_type,
+        "signups_last_7_days": signups_7d,
+        "paid_users": paid_users,
+        "conversion_rate": round(conversion_rate, 2)
+    }
+
+# Referral endpoints
+@app.get("/api/referral/code")
+async def get_referral_code(user: dict = Depends(require_user)):
+    """Get or generate user's referral code"""
+    with get_db() as conn:
+        if USE_POSTGRES:
+            result = conn.execute("SELECT referral_code FROM users WHERE id = %s", (user["id"],))
+        else:
+            result = conn.execute("SELECT referral_code FROM users WHERE id = ?", (user["id"],))
+        
+        row = result.fetchone()
+        referral_code = row[0] if row else None
+        
+        if not referral_code:
+            referral_code = generate_referral_code()
+            if USE_POSTGRES:
+                conn.execute("UPDATE users SET referral_code = %s WHERE id = %s", (referral_code, user["id"]))
+            else:
+                conn.execute("UPDATE users SET referral_code = ? WHERE id = ?", (referral_code, user["id"]))
+            conn.commit()
+    
+    referral_url = f"{FRONTEND_URL}?ref={referral_code}"
+    return {
+        "referral_code": referral_code,
+        "referral_url": referral_url
+    }
+
+@app.get("/api/referral/stats")
+async def get_referral_stats(user: dict = Depends(require_user)):
+    """Get user's referral statistics"""
+    with get_db() as conn:
+        if USE_POSTGRES:
+            # Count referred users
+            referred = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE referred_by = %s",
+                (user["id"],)
+            )
+            referred_count = referred.fetchone()[0]
+            
+            # Count converted referrals (users who upgraded)
+            converted = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE referred_by = %s AND tier != 'free'",
+                (user["id"],)
+            )
+            converted_count = converted.fetchone()[0]
+            
+            # Total rewards earned
+            rewards = conn.execute(
+                "SELECT SUM(reward_amount) FROM referral_rewards WHERE referrer_id = %s",
+                (user["id"],)
+            )
+            total_rewards = rewards.fetchone()[0] or 0
+            
+            # Pending rewards
+            pending = conn.execute(
+                "SELECT SUM(reward_amount) FROM referral_rewards WHERE referrer_id = %s AND status = 'pending'",
+                (user["id"],)
+            )
+            pending_rewards = pending.fetchone()[0] or 0
+        else:
+            referred = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE referred_by = ?",
+                (user["id"],)
+            )
+            referred_count = referred.fetchone()[0]
+            
+            converted = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE referred_by = ? AND tier != 'free'",
+                (user["id"],)
+            )
+            converted_count = converted.fetchone()[0]
+            
+            rewards = conn.execute(
+                "SELECT SUM(reward_amount) FROM referral_rewards WHERE referrer_id = ?",
+                (user["id"],)
+            )
+            total_rewards = rewards.fetchone()[0] or 0
+            
+            pending = conn.execute(
+                "SELECT SUM(reward_amount) FROM referral_rewards WHERE referrer_id = ? AND status = 'pending'",
+                (user["id"],)
+            )
+            pending_rewards = pending.fetchone()[0] or 0
+    
+    return {
+        "referred_users": referred_count,
+        "converted_users": converted_count,
+        "total_rewards": total_rewards,
+        "pending_rewards": pending_rewards,
+        "reward_per_conversion": 1.0  # $1 per converted referral
+    }
+
+@app.post("/api/auth/register-with-referral")
+async def register_with_referral(data: ReferralSignupRequest, background_tasks: BackgroundTasks):
+    """Register a new user with optional referral code"""
+    with get_db() as conn:
+        # Check if email exists
+        if USE_POSTGRES:
+            result = conn.execute("SELECT id FROM users WHERE email = %s", (data.email,))
+        else:
+            result = conn.execute("SELECT id FROM users WHERE email = ?", (data.email,))
+        
+        if result.fetchone():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Check referral code if provided
+        referrer_id = None
+        if data.referral_code:
+            referrer = get_user_by_referral_code(data.referral_code)
+            if referrer:
+                referrer_id = referrer[0]
+        
+        # Create user
+        password_hash = hash_password(data.password)
+        referral_code = generate_referral_code()
+        
+        if USE_POSTGRES:
+            conn.execute(
+                "INSERT INTO users (email, password_hash, referral_code, referred_by) VALUES (%s, %s, %s, %s)",
+                (data.email, password_hash, referral_code, referrer_id)
+            )
+            result = conn.execute("SELECT id FROM users WHERE email = %s", (data.email,))
+        else:
+            conn.execute(
+                "INSERT INTO users (email, password_hash, referral_code, referred_by) VALUES (?, ?, ?, ?)",
+                (data.email, password_hash, referral_code, referrer_id)
+            )
+            result = conn.execute("SELECT id FROM users WHERE email = ?", (data.email,))
+        
+        user_id = result.fetchone()[0]
+        conn.commit()
+        
+        # Track signup event
+        track_event(user_id, "signup", f"referral_code={data.referral_code}" if data.referral_code else None)
+        
+        # Create pending referral reward if referred
+        if referrer_id:
+            create_referral_reward(referrer_id, user_id, "signup_bonus", 0.5)  # $0.50 for signup
+            track_event(referrer_id, "referral_signup", f"referred_user_id={user_id}")
+        
+        # Send welcome email
+        background_tasks.add_task(send_welcome_email, data.email)
+        
+        token = create_token(user_id)
+        return {"access_token": token, "token_type": "bearer"}
 
 @app.get("/healthz")
 async def healthz():
