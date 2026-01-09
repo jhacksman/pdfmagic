@@ -1,0 +1,530 @@
+import { useState, useCallback, useEffect } from 'react'
+import './App.css'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { FileText, Merge, Split, Minimize2, Image, Upload, LogOut, User, Check, Zap, Crown } from 'lucide-react'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+interface UserData {
+  id: number
+  email: string
+  tier: string
+  daily_ops_remaining: number
+  max_file_mb: number
+}
+
+interface PricingTier {
+  name: string
+  price: number
+  price_id?: string
+  features: string[]
+}
+
+function App() {
+  const [user, setUser] = useState<UserData | null>(null)
+  const [token, setToken] = useState<string | null>(localStorage.getItem('token'))
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [authDialogOpen, setAuthDialogOpen] = useState(false)
+  const [selectedTool, setSelectedTool] = useState<string>('merge')
+  const [files, setFiles] = useState<File[]>([])
+  const [processing, setProcessing] = useState(false)
+  const [message, setMessage] = useState('')
+  const [pricing, setPricing] = useState<PricingTier[]>([])
+  const [showPricing, setShowPricing] = useState(false)
+
+  const fetchUser = useCallback(async () => {
+    if (!token) return
+    try {
+      const res = await fetch(`${API_URL}/api/user/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setUser(data)
+      } else {
+        localStorage.removeItem('token')
+        setToken(null)
+        setUser(null)
+      }
+    } catch (e) {
+      console.error('Failed to fetch user', e)
+    }
+  }, [token])
+
+  const fetchPricing = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/pricing`)
+      if (res.ok) {
+        const data = await res.json()
+        setPricing(data.tiers)
+      }
+    } catch (e) {
+      console.error('Failed to fetch pricing', e)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchUser()
+    fetchPricing()
+  }, [fetchUser, fetchPricing])
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAuthError('')
+    try {
+      const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register'
+      const res = await fetch(`${API_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: authEmail, password: authPassword })
+      })
+      const data = await res.json()
+      if (res.ok) {
+        localStorage.setItem('token', data.access_token)
+        setToken(data.access_token)
+        setAuthDialogOpen(false)
+        setAuthEmail('')
+        setAuthPassword('')
+      } else {
+        setAuthError(data.detail || 'Authentication failed')
+      }
+    } catch (e) {
+      setAuthError('Network error. Please try again.')
+    }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    setToken(null)
+    setUser(null)
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setFiles(Array.from(e.target.files))
+      setMessage('')
+    }
+  }
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    if (e.dataTransfer.files) {
+      setFiles(Array.from(e.dataTransfer.files))
+      setMessage('')
+    }
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+  }, [])
+
+  const processFiles = async () => {
+    if (!token || !user) {
+      setAuthDialogOpen(true)
+      return
+    }
+    if (files.length === 0) {
+      setMessage('Please select files first')
+      return
+    }
+
+    setProcessing(true)
+    setMessage('')
+
+    const formData = new FormData()
+    
+    let endpoint = ''
+    switch (selectedTool) {
+      case 'merge':
+        if (files.length < 2) {
+          setMessage('Please select at least 2 PDF files to merge')
+          setProcessing(false)
+          return
+        }
+        endpoint = '/api/pdf/merge'
+        files.forEach(f => formData.append('files', f))
+        break
+      case 'split':
+        if (files.length !== 1) {
+          setMessage('Please select exactly 1 PDF file to split')
+          setProcessing(false)
+          return
+        }
+        endpoint = '/api/pdf/split'
+        formData.append('file', files[0])
+        break
+      case 'compress':
+        if (files.length !== 1) {
+          setMessage('Please select exactly 1 PDF file to compress')
+          setProcessing(false)
+          return
+        }
+        endpoint = '/api/pdf/compress'
+        formData.append('file', files[0])
+        break
+      case 'pdf-to-images':
+        if (files.length !== 1) {
+          setMessage('Please select exactly 1 PDF file')
+          setProcessing(false)
+          return
+        }
+        endpoint = '/api/pdf/to-images'
+        formData.append('file', files[0])
+        break
+      case 'images-to-pdf':
+        if (files.length < 1) {
+          setMessage('Please select at least 1 image file')
+          setProcessing(false)
+          return
+        }
+        endpoint = '/api/images/to-pdf'
+        files.forEach(f => formData.append('files', f))
+        break
+    }
+
+    try {
+      const res = await fetch(`${API_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      })
+
+      if (res.ok) {
+        const blob = await res.blob()
+        const contentDisposition = res.headers.get('Content-Disposition')
+        let filename = 'download'
+        if (contentDisposition) {
+          const match = contentDisposition.match(/filename=(.+)/)
+          if (match) filename = match[1]
+        }
+        
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+        
+        setMessage('Success! Your file has been downloaded.')
+        setFiles([])
+        fetchUser() // Refresh user data to update remaining ops
+      } else {
+        const data = await res.json()
+        setMessage(data.detail || 'Processing failed')
+      }
+    } catch (e) {
+      setMessage('Network error. Please try again.')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  const handleUpgrade = async (priceId: string) => {
+    if (!token) {
+      setAuthDialogOpen(true)
+      return
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/stripe/create-checkout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          price_id: priceId,
+          success_url: window.location.origin + '?success=true',
+          cancel_url: window.location.origin + '?canceled=true'
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.checkout_url) {
+        window.location.href = data.checkout_url
+      } else {
+        setMessage(data.detail || 'Failed to create checkout session')
+      }
+    } catch (e) {
+      setMessage('Network error. Please try again.')
+    }
+  }
+
+  const handleManageSubscription = async () => {
+    if (!token) return
+    try {
+      const res = await fetch(`${API_URL}/api/stripe/portal`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (res.ok && data.portal_url) {
+        window.location.href = data.portal_url
+      }
+    } catch (e) {
+      console.error('Failed to open portal', e)
+    }
+  }
+
+  const tools = [
+    { id: 'merge', name: 'Merge PDFs', icon: Merge, description: 'Combine multiple PDFs into one', accept: '.pdf', multiple: true },
+    { id: 'split', name: 'Split PDF', icon: Split, description: 'Split a PDF into individual pages', accept: '.pdf', multiple: false },
+    { id: 'compress', name: 'Compress PDF', icon: Minimize2, description: 'Reduce PDF file size', accept: '.pdf', multiple: false },
+    { id: 'pdf-to-images', name: 'PDF to Images', icon: Image, description: 'Extract images from PDF', accept: '.pdf', multiple: false },
+    { id: 'images-to-pdf', name: 'Images to PDF', icon: FileText, description: 'Convert images to PDF', accept: 'image/*', multiple: true },
+  ]
+
+  const currentTool = tools.find(t => t.id === selectedTool)
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+      {/* Header */}
+      <header className="border-b border-white/10 bg-black/20 backdrop-blur-sm">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <FileText className="h-8 w-8 text-purple-400" />
+            <span className="text-2xl font-bold text-white">PDFMagic</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" className="text-white hover:text-purple-300" onClick={() => setShowPricing(true)}>
+              Pricing
+            </Button>
+            {user ? (
+              <div className="flex items-center gap-4">
+                <div className="text-sm text-white/70">
+                  <span className="text-purple-300 font-medium">{user.tier.toUpperCase()}</span>
+                  <span className="mx-2">|</span>
+                  <span>{user.daily_ops_remaining} ops left today</span>
+                </div>
+                {user.tier !== 'free' && (
+                  <Button variant="outline" size="sm" onClick={handleManageSubscription} className="border-white/20 text-white hover:bg-white/10">
+                    Manage Subscription
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:text-red-300">
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Logout
+                </Button>
+              </div>
+            ) : (
+              <Dialog open={authDialogOpen} onOpenChange={setAuthDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="bg-purple-600 hover:bg-purple-700 text-white">
+                    <User className="h-4 w-4 mr-2" />
+                    Sign In
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="bg-slate-900 border-white/10 text-white">
+                  <DialogHeader>
+                    <DialogTitle>{authMode === 'login' ? 'Sign In' : 'Create Account'}</DialogTitle>
+                  </DialogHeader>
+                  <form onSubmit={handleAuth} className="space-y-4">
+                    <div>
+                      <Label htmlFor="email">Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={authEmail}
+                        onChange={(e) => setAuthEmail(e.target.value)}
+                        className="bg-slate-800 border-white/20 text-white"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="password">Password</Label>
+                      <Input
+                        id="password"
+                        type="password"
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        className="bg-slate-800 border-white/20 text-white"
+                        required
+                      />
+                    </div>
+                    {authError && <p className="text-red-400 text-sm">{authError}</p>}
+                    <Button type="submit" className="w-full bg-purple-600 hover:bg-purple-700">
+                      {authMode === 'login' ? 'Sign In' : 'Create Account'}
+                    </Button>
+                    <p className="text-center text-sm text-white/60">
+                      {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
+                      <button
+                        type="button"
+                        className="text-purple-400 hover:underline"
+                        onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+                      >
+                        {authMode === 'login' ? 'Sign up' : 'Sign in'}
+                      </button>
+                    </p>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Hero Section */}
+      <section className="container mx-auto px-4 py-16 text-center">
+        <h1 className="text-5xl font-bold text-white mb-4">
+          All Your PDF Tools in One Place
+        </h1>
+        <p className="text-xl text-white/70 mb-8 max-w-2xl mx-auto">
+          Merge, split, compress, and convert PDFs with ease. Fast, secure, and free to start.
+        </p>
+      </section>
+
+      {/* Tools Section */}
+      <section className="container mx-auto px-4 pb-16">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+          {tools.map((tool) => (
+            <button
+              key={tool.id}
+              onClick={() => { setSelectedTool(tool.id); setFiles([]); setMessage(''); }}
+              className={`p-4 rounded-xl border transition-all ${
+                selectedTool === tool.id
+                  ? 'bg-purple-600 border-purple-400 text-white'
+                  : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              <tool.icon className="h-8 w-8 mx-auto mb-2" />
+              <span className="text-sm font-medium">{tool.name}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Upload Area */}
+        <Card className="bg-white/5 border-white/10 p-8">
+          <div
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            className="border-2 border-dashed border-white/20 rounded-xl p-12 text-center hover:border-purple-400 transition-colors cursor-pointer"
+            onClick={() => document.getElementById('file-input')?.click()}
+          >
+            <Upload className="h-12 w-12 text-white/40 mx-auto mb-4" />
+            <p className="text-white text-lg mb-2">
+              {currentTool?.description}
+            </p>
+            <p className="text-white/50 text-sm mb-4">
+              Drag and drop files here, or click to browse
+            </p>
+            <input
+              id="file-input"
+              type="file"
+              accept={currentTool?.accept}
+              multiple={currentTool?.multiple}
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            {files.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {files.map((file, i) => (
+                  <div key={i} className="text-purple-300 text-sm">
+                    {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {message && (
+            <p className={`mt-4 text-center ${message.includes('Success') ? 'text-green-400' : 'text-red-400'}`}>
+              {message}
+            </p>
+          )}
+
+          <div className="mt-6 flex justify-center">
+            <Button
+              onClick={processFiles}
+              disabled={processing || files.length === 0}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-8 py-6 text-lg"
+            >
+              {processing ? 'Processing...' : `Process ${files.length} File${files.length !== 1 ? 's' : ''}`}
+            </Button>
+          </div>
+
+          {user && (
+            <p className="text-center text-white/50 text-sm mt-4">
+              Max file size: {user.max_file_mb}MB | {user.daily_ops_remaining} operations remaining today
+            </p>
+          )}
+        </Card>
+      </section>
+
+      {/* Pricing Modal */}
+      <Dialog open={showPricing} onOpenChange={setShowPricing}>
+        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="text-2xl text-center">Choose Your Plan</DialogTitle>
+          </DialogHeader>
+          <div className="grid md:grid-cols-3 gap-6 mt-6">
+            {pricing.map((tier, i) => (
+              <Card
+                key={tier.name}
+                className={`p-6 ${
+                  i === 1
+                    ? 'bg-purple-600/20 border-purple-400'
+                    : 'bg-white/5 border-white/10'
+                }`}
+              >
+                <div className="text-center mb-4">
+                  {i === 0 && <Zap className="h-8 w-8 mx-auto mb-2 text-white/60" />}
+                  {i === 1 && <Crown className="h-8 w-8 mx-auto mb-2 text-purple-400" />}
+                  {i === 2 && <Crown className="h-8 w-8 mx-auto mb-2 text-yellow-400" />}
+                  <h3 className="text-xl font-bold text-white">{tier.name}</h3>
+                  <div className="text-3xl font-bold text-white mt-2">
+                    ${tier.price}
+                    {tier.price > 0 && <span className="text-sm font-normal text-white/60">/month</span>}
+                  </div>
+                </div>
+                <ul className="space-y-3 mb-6">
+                  {tier.features.map((feature, j) => (
+                    <li key={j} className="flex items-center gap-2 text-white/80 text-sm">
+                      <Check className="h-4 w-4 text-green-400 flex-shrink-0" />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+                {tier.price_id && user?.tier !== tier.name.toLowerCase() ? (
+                  <Button
+                    onClick={() => handleUpgrade(tier.price_id!)}
+                    className={`w-full ${
+                      i === 1
+                        ? 'bg-purple-600 hover:bg-purple-700'
+                        : 'bg-white/10 hover:bg-white/20'
+                    }`}
+                  >
+                    {user?.tier === 'free' ? 'Upgrade' : 'Switch Plan'}
+                  </Button>
+                ) : tier.price === 0 ? (
+                  <Button variant="outline" className="w-full border-white/20 text-white" disabled>
+                    {user?.tier === 'free' ? 'Current Plan' : 'Free Tier'}
+                  </Button>
+                ) : (
+                  <Button variant="outline" className="w-full border-white/20 text-white" disabled>
+                    Current Plan
+                  </Button>
+                )}
+              </Card>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Footer */}
+      <footer className="border-t border-white/10 bg-black/20 mt-16">
+        <div className="container mx-auto px-4 py-8 text-center text-white/50 text-sm">
+          <p>PDFMagic - Fast, secure PDF tools for everyone</p>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+export default App
