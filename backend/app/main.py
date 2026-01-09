@@ -19,6 +19,9 @@ import stripe
 import jwt
 import bcrypt
 from dotenv import load_dotenv
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+import httpx
 
 load_dotenv()
 
@@ -40,6 +43,10 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_PRICE_PRO = os.getenv("STRIPE_PRICE_PRO", "")
 STRIPE_PRICE_BUSINESS = os.getenv("STRIPE_PRICE_BUSINESS", "")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "/data/app.db")
+
+# OAuth Configuration
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "")  # Your app's bundle ID
 
 # Initialize Stripe
 if STRIPE_SECRET_KEY:
@@ -127,6 +134,13 @@ class CheckoutRequest(BaseModel):
     price_id: str
     success_url: str
     cancel_url: str
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+
+class AppleAuthRequest(BaseModel):
+    id_token: str
+    user_info: Optional[dict] = None  # Apple only sends user info on first sign-in
 
 # Auth helpers
 def create_token(user_id: int) -> str:
@@ -229,6 +243,129 @@ async def login(data: UserLogin):
         
     token = create_token(user["id"])
     return TokenResponse(access_token=token)
+
+@app.post("/api/auth/google", response_model=TokenResponse)
+async def google_auth(data: GoogleAuthRequest):
+    """Authenticate with Google Sign-In"""
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+    
+    try:
+        # Verify the Google ID token
+        idinfo = id_token.verify_oauth2_token(
+            data.id_token, 
+            google_requests.Request(), 
+            GOOGLE_CLIENT_ID
+        )
+        
+        email = idinfo.get("email")
+        if not email:
+            raise HTTPException(status_code=400, detail="Email not provided by Google")
+        
+        # Check if user exists, create if not
+        with get_db() as conn:
+            user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            
+            if user:
+                user_id = user["id"]
+            else:
+                # Create new user with random password (they'll use OAuth to login)
+                random_password = secrets.token_hex(32)
+                password_hash = hash_password(random_password)
+                cursor = conn.execute(
+                    "INSERT INTO users (email, password_hash) VALUES (?, ?)",
+                    (email, password_hash)
+                )
+                conn.commit()
+                user_id = cursor.lastrowid
+        
+        token = create_token(user_id)
+        return TokenResponse(access_token=token)
+        
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid Google token: {str(e)}")
+
+@app.post("/api/auth/apple", response_model=TokenResponse)
+async def apple_auth(data: AppleAuthRequest):
+    """Authenticate with Sign in with Apple"""
+    if not APPLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Apple OAuth not configured")
+    
+    try:
+        # Fetch Apple's public keys
+        async with httpx.AsyncClient() as client:
+            response = await client.get("https://appleid.apple.com/auth/keys")
+            apple_keys = response.json()
+        
+        # Decode the token header to get the key ID
+        header = jwt.get_unverified_header(data.id_token)
+        kid = header.get("kid")
+        
+        # Find the matching key
+        key = None
+        for k in apple_keys.get("keys", []):
+            if k.get("kid") == kid:
+                key = k
+                break
+        
+        if not key:
+            raise HTTPException(status_code=401, detail="Unable to find matching Apple key")
+        
+        # Verify and decode the token
+        from jose import jwt as jose_jwt
+        from jose.utils import base64url_decode
+        import json
+        
+        # Construct the public key
+        public_key = {
+            "kty": key["kty"],
+            "kid": key["kid"],
+            "use": key["use"],
+            "alg": key["alg"],
+            "n": key["n"],
+            "e": key["e"]
+        }
+        
+        # Verify the token
+        payload = jose_jwt.decode(
+            data.id_token,
+            public_key,
+            algorithms=["RS256"],
+            audience=APPLE_CLIENT_ID,
+            issuer="https://appleid.apple.com"
+        )
+        
+        email = payload.get("email")
+        
+        # Apple only sends email on first sign-in, check user_info
+        if not email and data.user_info:
+            email = data.user_info.get("email")
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Email not provided by Apple")
+        
+        # Check if user exists, create if not
+        with get_db() as conn:
+            user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            
+            if user:
+                user_id = user["id"]
+            else:
+                # Create new user with random password
+                random_password = secrets.token_hex(32)
+                password_hash = hash_password(random_password)
+                cursor = conn.execute(
+                    "INSERT INTO users (email, password_hash) VALUES (?, ?)",
+                    (email, password_hash)
+                )
+                conn.commit()
+                user_id = cursor.lastrowid
+        
+        token = create_token(user_id)
+        return TokenResponse(access_token=token)
+        
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid Apple token: {str(e)}")
 
 @app.get("/api/user/me", response_model=UserResponse)
 async def get_me(user: dict = Depends(require_user)):
