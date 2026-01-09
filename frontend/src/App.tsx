@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { FileText, Merge, Split, Minimize2, Image, Upload, LogOut, User, Check, Zap, Crown, Settings, Trash2, KeyRound } from 'lucide-react'
+import { FileText, Merge, Split, Minimize2, Image, Upload, LogOut, User, Check, Zap, Crown, Settings, Trash2, KeyRound, BarChart3, Gift, Copy } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
@@ -52,9 +52,29 @@ function App() {
     const [currentPassword, setCurrentPassword] = useState('')
     const [profileNewPassword, setProfileNewPassword] = useState('')
     const [profileMessage, setProfileMessage] = useState('')
-    const [showTerms, setShowTerms] = useState(false)
-    const [showPrivacy, setShowPrivacy] = useState(false)
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+        const [showTerms, setShowTerms] = useState(false)
+        const [showPrivacy, setShowPrivacy] = useState(false)
+        const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+        // Phase 2: Analytics and Referral
+        const [showAnalytics, setShowAnalytics] = useState(false)
+        const [showReferral, setShowReferral] = useState(false)
+        const [analyticsData, setAnalyticsData] = useState<{
+          total_operations: number
+          operations_by_type: Record<string, number>
+          referral_code: string
+          referred_users: number
+          total_rewards: number
+          tier: string
+        } | null>(null)
+        const [referralData, setReferralData] = useState<{
+          referral_code: string
+          referral_url: string
+          referred_users: number
+          converted_users: number
+          total_rewards: number
+          pending_rewards: number
+        } | null>(null)
+        const [referralCopied, setReferralCopied] = useState(false)
 
   const fetchUser = useCallback(async () => {
     if (!token) return
@@ -462,25 +482,77 @@ function App() {
           }
         }
 
-        const handleDeleteAccount = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/user/account`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        if (res.ok) {
-          localStorage.removeItem('token')
-          setToken(null)
-          setUser(null)
-          setShowDeleteConfirm(false)
-          setShowProfile(false)
-        }
-          } catch (err) {
-            console.error('Failed to delete account', err)
-          }
-        }
+              const handleDeleteAccount = async () => {
+            try {
+              const res = await fetch(`${API_URL}/api/user/account`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+              })
+              if (res.ok) {
+                localStorage.removeItem('token')
+                setToken(null)
+                setUser(null)
+                setShowDeleteConfirm(false)
+                setShowProfile(false)
+              }
+                } catch (err) {
+                  console.error('Failed to delete account', err)
+                }
+              }
 
-        // Check for reset token in URL
+          // Phase 2: Analytics and Referral handlers
+          const fetchAnalytics = async () => {
+            if (!token) return
+            try {
+              const res = await fetch(`${API_URL}/api/analytics/dashboard`, {
+                headers: { Authorization: `Bearer ${token}` }
+              })
+              if (res.ok) {
+                const data = await res.json()
+                setAnalyticsData(data)
+              }
+            } catch (err) {
+              console.error('Failed to fetch analytics', err)
+            }
+          }
+
+          const fetchReferralData = async () => {
+            if (!token) return
+            try {
+              const [codeRes, statsRes] = await Promise.all([
+                fetch(`${API_URL}/api/referral/code`, {
+                  headers: { Authorization: `Bearer ${token}` }
+                }),
+                fetch(`${API_URL}/api/referral/stats`, {
+                  headers: { Authorization: `Bearer ${token}` }
+                })
+              ])
+              if (codeRes.ok && statsRes.ok) {
+                const codeData = await codeRes.json()
+                const statsData = await statsRes.json()
+                setReferralData({
+                  referral_code: codeData.referral_code,
+                  referral_url: codeData.referral_url,
+                  referred_users: statsData.referred_users,
+                  converted_users: statsData.converted_users,
+                  total_rewards: statsData.total_rewards,
+                  pending_rewards: statsData.pending_rewards
+                })
+              }
+            } catch (err) {
+              console.error('Failed to fetch referral data', err)
+            }
+          }
+
+          const copyReferralLink = () => {
+            if (referralData?.referral_url) {
+              navigator.clipboard.writeText(referralData.referral_url)
+              setReferralCopied(true)
+              setTimeout(() => setReferralCopied(false), 2000)
+            }
+          }
+
+              // Check for reset token in URL
     useEffect(() => {
       const params = new URLSearchParams(window.location.search)
       const token = params.get('token')
@@ -533,14 +605,22 @@ function App() {
                                     Manage Subscription
                                   </Button>
                                 )}
-                                <Button variant="ghost" size="sm" onClick={() => setShowProfile(true)} className="text-white hover:text-purple-300">
-                                  <Settings className="h-4 w-4 mr-2" />
-                                  Profile
-                                </Button>
-                                <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:text-red-300">
-                                  <LogOut className="h-4 w-4 mr-2" />
-                                  Logout
-                                </Button>
+                                                                <Button variant="ghost" size="sm" onClick={() => { setShowAnalytics(true); fetchAnalytics(); }} className="text-white hover:text-purple-300">
+                                                                  <BarChart3 className="h-4 w-4 mr-2" />
+                                                                  Analytics
+                                                                </Button>
+                                                                <Button variant="ghost" size="sm" onClick={() => { setShowReferral(true); fetchReferralData(); }} className="text-white hover:text-purple-300">
+                                                                  <Gift className="h-4 w-4 mr-2" />
+                                                                  Referral
+                                                                </Button>
+                                                                <Button variant="ghost" size="sm" onClick={() => setShowProfile(true)} className="text-white hover:text-purple-300">
+                                                                  <Settings className="h-4 w-4 mr-2" />
+                                                                  Profile
+                                                                </Button>
+                                                                <Button variant="ghost" size="sm" onClick={handleLogout} className="text-white hover:text-red-300">
+                                                                  <LogOut className="h-4 w-4 mr-2" />
+                                                                  Logout
+                                                                </Button>
               </div>
             ) : (
               <Dialog open={authDialogOpen} onOpenChange={setAuthDialogOpen}>
@@ -975,33 +1055,158 @@ function App() {
         </DialogContent>
       </Dialog>
 
-      {/* Privacy Policy Modal */}
-      <Dialog open={showPrivacy} onOpenChange={setShowPrivacy}>
-        <DialogContent className="bg-slate-900 border-white/10 text-white max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Privacy Policy</DialogTitle>
-          </DialogHeader>
-          <div className="prose prose-invert prose-sm max-w-none">
-            <p className="text-white/70">Last updated: January 2026</p>
-            <h3 className="text-white">1. Information We Collect</h3>
-            <p className="text-white/70">We collect information you provide directly, including email address and payment information. We also collect usage data to improve our service.</p>
-            <h3 className="text-white">2. How We Use Your Information</h3>
-            <p className="text-white/70">We use your information to provide and improve our services, process payments, send service-related communications, and respond to your requests.</p>
-            <h3 className="text-white">3. File Processing</h3>
-            <p className="text-white/70">Files you upload are processed on our servers and are automatically deleted after processing. We do not store or access the contents of your files beyond what is necessary to provide the service.</p>
-            <h3 className="text-white">4. Data Security</h3>
-            <p className="text-white/70">We implement appropriate security measures to protect your personal information. However, no method of transmission over the Internet is 100% secure.</p>
-            <h3 className="text-white">5. Third-Party Services</h3>
-            <p className="text-white/70">We use third-party services for payment processing (Stripe) and authentication. These services have their own privacy policies.</p>
-            <h3 className="text-white">6. Your Rights</h3>
-            <p className="text-white/70">You have the right to access, correct, or delete your personal information. You can manage your account settings or contact us for assistance.</p>
-            <h3 className="text-white">7. Contact Us</h3>
-            <p className="text-white/70">If you have questions about this Privacy Policy, please contact us through our support channels.</p>
-          </div>
-        </DialogContent>
-      </Dialog>
+            {/* Privacy Policy Modal */}
+            <Dialog open={showPrivacy} onOpenChange={setShowPrivacy}>
+              <DialogContent className="bg-slate-900 border-white/10 text-white max-w-2xl max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Privacy Policy</DialogTitle>
+                </DialogHeader>
+                <div className="prose prose-invert prose-sm max-w-none">
+                  <p className="text-white/70">Last updated: January 2026</p>
+                  <h3 className="text-white">1. Information We Collect</h3>
+                  <p className="text-white/70">We collect information you provide directly, including email address and payment information. We also collect usage data to improve our service.</p>
+                  <h3 className="text-white">2. How We Use Your Information</h3>
+                  <p className="text-white/70">We use your information to provide and improve our services, process payments, send service-related communications, and respond to your requests.</p>
+                  <h3 className="text-white">3. File Processing</h3>
+                  <p className="text-white/70">Files you upload are processed on our servers and are automatically deleted after processing. We do not store or access the contents of your files beyond what is necessary to provide the service.</p>
+                  <h3 className="text-white">4. Data Security</h3>
+                  <p className="text-white/70">We implement appropriate security measures to protect your personal information. However, no method of transmission over the Internet is 100% secure.</p>
+                  <h3 className="text-white">5. Third-Party Services</h3>
+                  <p className="text-white/70">We use third-party services for payment processing (Stripe) and authentication. These services have their own privacy policies.</p>
+                  <h3 className="text-white">6. Your Rights</h3>
+                  <p className="text-white/70">You have the right to access, correct, or delete your personal information. You can manage your account settings or contact us for assistance.</p>
+                  <h3 className="text-white">7. Contact Us</h3>
+                  <p className="text-white/70">If you have questions about this Privacy Policy, please contact us through our support channels.</p>
+                </div>
+              </DialogContent>
+            </Dialog>
 
-      {/* Footer */}
+            {/* Analytics Dashboard Modal */}
+            <Dialog open={showAnalytics} onOpenChange={setShowAnalytics}>
+              <DialogContent className="bg-slate-900 border-white/10 text-white max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <BarChart3 className="h-5 w-5 text-purple-400" />
+                    Analytics Dashboard
+                  </DialogTitle>
+                </DialogHeader>
+                {analyticsData ? (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-2 gap-4">
+                      <Card className="bg-slate-800 border-white/10 p-4">
+                        <p className="text-white/50 text-sm">Total Operations</p>
+                        <p className="text-3xl font-bold text-white">{analyticsData.total_operations}</p>
+                      </Card>
+                      <Card className="bg-slate-800 border-white/10 p-4">
+                        <p className="text-white/50 text-sm">Current Tier</p>
+                        <p className="text-3xl font-bold text-purple-400">{analyticsData.tier.toUpperCase()}</p>
+                      </Card>
+                    </div>
+              
+                    <div>
+                      <h4 className="text-white font-medium mb-3">Operations by Type</h4>
+                      <div className="space-y-2">
+                        {Object.entries(analyticsData.operations_by_type).length > 0 ? (
+                          Object.entries(analyticsData.operations_by_type).map(([type, count]) => (
+                            <div key={type} className="flex justify-between items-center bg-slate-800 rounded p-3">
+                              <span className="text-white/70 capitalize">{type.replace('-', ' ')}</span>
+                              <span className="text-white font-medium">{count}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-white/50 text-center py-4">No operations yet. Start processing PDFs!</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <Card className="bg-slate-800 border-white/10 p-4">
+                        <p className="text-white/50 text-sm">Referred Users</p>
+                        <p className="text-2xl font-bold text-white">{analyticsData.referred_users}</p>
+                      </Card>
+                      <Card className="bg-slate-800 border-white/10 p-4">
+                        <p className="text-white/50 text-sm">Total Rewards</p>
+                        <p className="text-2xl font-bold text-green-400">${analyticsData.total_rewards.toFixed(2)}</p>
+                      </Card>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-white/50">Loading analytics...</p>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
+
+            {/* Referral Program Modal */}
+            <Dialog open={showReferral} onOpenChange={setShowReferral}>
+              <DialogContent className="bg-slate-900 border-white/10 text-white max-w-lg">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Gift className="h-5 w-5 text-purple-400" />
+                    Referral Program
+                  </DialogTitle>
+                </DialogHeader>
+                {referralData ? (
+                  <div className="space-y-6">
+                    <div className="bg-gradient-to-r from-purple-900/50 to-pink-900/50 rounded-lg p-4 border border-purple-500/30">
+                      <p className="text-white/70 text-sm mb-2">Share your referral link</p>
+                      <div className="flex gap-2">
+                        <Input
+                          value={referralData.referral_url}
+                          readOnly
+                          className="bg-slate-800 border-white/20 text-white text-sm"
+                        />
+                        <Button onClick={copyReferralLink} className="bg-purple-600 hover:bg-purple-700">
+                          {referralCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                      <p className="text-white/50 text-xs mt-2">
+                        Earn $0.50 for each signup and $1.00 for each conversion!
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <Card className="bg-slate-800 border-white/10 p-4 text-center">
+                        <p className="text-white/50 text-sm">Referred Users</p>
+                        <p className="text-3xl font-bold text-white">{referralData.referred_users}</p>
+                      </Card>
+                      <Card className="bg-slate-800 border-white/10 p-4 text-center">
+                        <p className="text-white/50 text-sm">Converted</p>
+                        <p className="text-3xl font-bold text-green-400">{referralData.converted_users}</p>
+                      </Card>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <Card className="bg-slate-800 border-white/10 p-4 text-center">
+                        <p className="text-white/50 text-sm">Total Earned</p>
+                        <p className="text-2xl font-bold text-green-400">${referralData.total_rewards.toFixed(2)}</p>
+                      </Card>
+                      <Card className="bg-slate-800 border-white/10 p-4 text-center">
+                        <p className="text-white/50 text-sm">Pending</p>
+                        <p className="text-2xl font-bold text-yellow-400">${referralData.pending_rewards.toFixed(2)}</p>
+                      </Card>
+                    </div>
+
+                    <div className="bg-slate-800 rounded-lg p-4">
+                      <h4 className="text-white font-medium mb-2">How it works</h4>
+                      <ul className="text-white/70 text-sm space-y-1">
+                        <li>1. Share your unique referral link with friends</li>
+                        <li>2. Earn $0.50 when they sign up</li>
+                        <li>3. Earn $1.00 more when they upgrade to Pro or Business</li>
+                        <li>4. Rewards are credited to your account monthly</li>
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-white/50">Loading referral data...</p>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
+
+            {/* Footer */}
       <footer className="border-t border-white/10 bg-black/20 mt-16">
         <div className="container mx-auto px-4 py-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
