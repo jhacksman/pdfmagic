@@ -78,7 +78,7 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-# Tier limits (Updated pricing: Pro $14.99, Business $39.99)
+# Tier limits (Updated pricing: Pro $5, Business $25)
 TIER_LIMITS = {
     "free": {"daily_ops": 3, "max_file_mb": 5},
     "pro": {"daily_ops": 100, "max_file_mb": 25},  # Reduced from 1000 to 100
@@ -930,21 +930,21 @@ async def get_pricing():
                     "All PDF tools"
                 ]
             },
-            {
-                "name": "Pro",
-                "price": 14.99,
-                "price_id": STRIPE_PRICE_PRO,
-                "features": [
-                    "100 operations per day",
-                    "Max 25MB file size",
-                    "All PDF tools",
-                    "Priority support"
-                ]
-            },
-            {
-                "name": "Business",
-                "price": 39.99,
-                "price_id": STRIPE_PRICE_BUSINESS,
+                        {
+                            "name": "Pro",
+                            "price": 5,
+                            "price_id": STRIPE_PRICE_PRO,
+                            "features": [
+                                "100 operations per day",
+                                "Max 25MB file size",
+                                "All PDF tools",
+                                "Priority support"
+                            ]
+                        },
+                        {
+                            "name": "Business",
+                            "price": 25,
+                            "price_id": STRIPE_PRICE_BUSINESS,
                 "features": [
                     "1,000 operations per day",
                     "Max 100MB file size",
